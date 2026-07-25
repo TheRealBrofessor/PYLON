@@ -1,0 +1,16 @@
+.env
+certs/*
+backups/*
+snapshots/*
+logs/*
+services/elasticsearch/data/*
+*.key
+*.pem
+*.p12
+*.log
+
+!certs/.gitkeep
+!backups/.gitkeep
+!snapshots/.gitkeep
+!logs/.gitkeep
+!services/elasticsearch/data/.gitkeep

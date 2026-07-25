@@ -1,0 +1,8 @@
+.git
+.env
+logs
+backups
+snapshots
+certs
+README.md
+
