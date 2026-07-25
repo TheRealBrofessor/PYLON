@@ -14,3 +14,7 @@ services/elasticsearch/data/*
 !snapshots/.gitkeep
 !logs/.gitkeep
 !services/elasticsearch/data/.gitkeep
+
+# Fleet TLS private material and generated archives
+certs/**/*.key
+certs/**/*.zip

@@ -129,8 +129,6 @@ services:
       FLEET_SERVER_POLICY_ID: ${FLEET_SERVER_POLICY_ID}
 
       FLEET_URL: "https://192.168.126.130:8220"
-      FLEET_CA: /certs/fleet-ca.crt
-      
       FLEET_SERVER_HOST: 0.0.0.0
       FLEET_SERVER_PORT: "8220"
 
@@ -141,12 +139,6 @@ services:
       - "192.168.126.130:8220:8220"
 
     volumes:
-
-      - type: bind
-        source: ./certs/fleet/ca/ca/ca.crt
-        target: /certs/fleet-ca.crt
-        read_only: true
-        
       - type: bind
         source: ./certs/fleet/server/pylon-fleet-server/pylon-fleet-server.crt
         target: /certs/pylon-fleet-server.crt
