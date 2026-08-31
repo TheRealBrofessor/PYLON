@@ -5,6 +5,8 @@ set -euo pipefail
 REQ_PKGS=(iw rfkill macchanger ethtool nftables)
 UDEV_RULE="/etc/udev/rules.d/10-pylon.rules"
 NFT_FILE="/etc/nftables-pylon.nft"
+MODPROBE_FILE="/etc/modprobe.d/8814au.conf"
+SELF_INSTALL="/usr/local/bin/pylon.sh"
 IFACE="PYLON"
 
 need_root() { [[ $EUID -eq 0 ]] || { echo "Run as root (sudo $0 $*)"; exit 1; }; }
@@ -146,9 +148,49 @@ boot_listen_disable() {
   echo "[pylon] Boot service disabled."
 }
 
+install_self() {
+  # Fix README gap: actually place pylon.sh on PATH at /usr/local/bin.
+  local src; src="$(readlink -f "$0")"
+  if [[ "$src" != "$SELF_INSTALL" ]]; then
+    install -m 0755 "$src" "$SELF_INSTALL"
+    echo "[pylon] Installed to $SELF_INSTALL (run 'sudo pylon.sh <cmd>' from anywhere)."
+  fi
+}
+
+write_modprobe_conf() {
+  # Max-throughput driver profile for the AWUS1900 / RTL8814AU:
+  #   USB 3.0 SuperSpeed + power-save OFF. Host has USB3 (10000M) root hubs.
+  # Fallback to rtw_switch_usb_mode=2 (USB 2.0) if the adapter won't enumerate.
+  cat > "$MODPROBE_FILE" <<'EOF'
+# /etc/modprobe.d/8814au.conf  — managed by PYLON setup
+# Max-throughput profile for Alfa AWUS1900 / RTL8814AU (client/managed mode).
+options 8814au rtw_switch_usb_mode=1 rtw_power_mgnt=0 rtw_led_ctrl=1 rtw_drv_log_level=1
+# FALLBACK if USB3 mode fails to enumerate (error -71): comment the line above,
+# uncomment the line below, then: modprobe -r 8814au && modprobe 8814au
+#options 8814au rtw_switch_usb_mode=2 rtw_power_mgnt=0 rtw_led_ctrl=1
+EOF
+  echo "[pylon] Wrote driver speed profile: $MODPROBE_FILE"
+  # Reload the module now if it is loaded, so the settings take effect.
+  if lsmod | grep -q '^8814au'; then
+    modprobe -r 8814au 2>/dev/null || true
+    modprobe 8814au 2>/dev/null && echo "[pylon] Reloaded 8814au with new options." || true
+  fi
+}
+
 setup() {
   need_root
   ensure_packages
+  install_self
+  write_modprobe_conf
+  # The udev rename needs the adapter present. Don't hard-fail the whole setup
+  # if it isn't plugged in yet — deps/config/driver are already done above.
+  local line; line="$(lsusb | grep -Ei 'Realtek|0bda' || true)"
+  if [[ -z "$line" ]]; then
+    echo "[pylon] Deps + driver profile + script install DONE."
+    echo "[pylon] Adapter not on USB yet. Plug it in, then run: sudo pylon.sh setup"
+    echo "[pylon] (If it never appears in 'lsusb', the USB cable/port is the issue.)"
+    return 0
+  fi
   local vidpid; vidpid="$(detect_vidpid)"
   write_udev_rule "$vidpid"
   echo "[pylon] If the interface name isn't '$IFACE' yet, unplug/replug the Alfa and re-run 'pylon.sh audit'."
@@ -236,19 +278,3 @@ main() {
 }
 
 main "$@"
-toggle)
-        IFACE="PYLON"
-        LOW=10
-        HIGH=20
-        current=$(iw dev $IFACE info | awk '/txpower/ {print int($2)}')
-
-        if [ "$current" -ge "$HIGH" ]; then
-            echo "[*] Switching $IFACE Tx power -> $LOW dBm (stealth mode)"
-            sudo iw dev $IFACE set txpower fixed ${LOW}00
-        else
-            echo "[*] Switching $IFACE Tx power -> $HIGH dBm (full power)"
-            sudo iw dev $IFACE set txpower fixed ${HIGH}00
-        fi
-
-        iw dev $IFACE info | grep txpower
-        ;;
