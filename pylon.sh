@@ -170,10 +170,35 @@ options 8814au rtw_switch_usb_mode=1 rtw_power_mgnt=0 rtw_led_ctrl=1 rtw_drv_log
 #options 8814au rtw_switch_usb_mode=2 rtw_power_mgnt=0 rtw_led_ctrl=1
 EOF
   echo "[pylon] Wrote driver speed profile: $MODPROBE_FILE"
-  # Reload the module now if it is loaded, so the settings take effect.
+  # Reload the module so the settings take effect, then VERIFY the adapter
+  # re-enumerates. USB 3.0 SuperSpeed negotiation is exactly what fails with
+  # error -71 on flaky ports/cables; if the interface does not come back,
+  # auto-revert to USB 2.0 mode so we never leave a working adapter dead.
   if lsmod | grep -q '^8814au'; then
     modprobe -r 8814au 2>/dev/null || true
-    modprobe 8814au 2>/dev/null && echo "[pylon] Reloaded 8814au with new options." || true
+    modprobe 8814au 2>/dev/null || true
+    local back=""
+    for _ in $(seq 1 15); do
+      back="$(ls /sys/class/net | grep -E '^(PYLON|wlx)' | head -1)"
+      [[ -n "$back" ]] && break
+      sleep 1
+    done
+    if [[ -z "$back" ]]; then
+      echo "[pylon] USB 3.0 mode did not re-enumerate — reverting to USB 2.0."
+      sed -i 's/^options 8814au rtw_switch_usb_mode=1.*/#&/' "$MODPROBE_FILE"
+      sed -i 's/^#\(options 8814au rtw_switch_usb_mode=2\)/\1/' "$MODPROBE_FILE"
+      modprobe -r 8814au 2>/dev/null || true
+      modprobe 8814au 2>/dev/null || true
+      for _ in $(seq 1 15); do
+        back="$(ls /sys/class/net | grep -E '^(PYLON|wlx)' | head -1)"
+        [[ -n "$back" ]] && break
+        sleep 1
+      done
+      [[ -n "$back" ]] && echo "[pylon] Recovered at USB 2.0: $back" \
+                       || echo "[pylon] WARNING: adapter did not return; replug it."
+    else
+      echo "[pylon] Reloaded 8814au (USB 3.0 mode); interface present: $back"
+    fi
   fi
 }
 
