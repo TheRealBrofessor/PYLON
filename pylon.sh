@@ -41,9 +41,8 @@ ensure_packages() {
 }
 
 ensure_nft_base() {
-  # Minimal nftables base with a set for iface names and a drop chain for egress
-  [[ -f "$NFT_FILE" ]] || cat > "$NFT_FILE" <<'EOF'
-flush ruleset
+  # Own only the PYLON table. Never flush or replace unrelated host firewall state.
+  cat > "$NFT_FILE" <<'EOF'
 table inet pylon {
   set ifaces { type ifname; flags interval; }
   chain egress_pylon {
@@ -69,14 +68,14 @@ remove_iface_from_drop() {
 }
 
 listen_mode() {
-  # Stealth: monitor mode, randomized MAC, low TX power, no outbound frames
+  # Listen-only profile: monitor mode, randomized MAC, low TX power, no outbound frames.
   exists "$IFACE" || { echo "Interface $IFACE not found. Is udev rule applied + device replugged?"; exit 1; }
   nmcli device set "$IFACE" managed no 2>/dev/null || true
   ip link set "$IFACE" down
   macchanger -r "$IFACE" >/dev/null || true
   iw dev "$IFACE" set type monitor 2>/dev/null || true
   ip link set "$IFACE" up
-  iwconfig "$IFACE" txpower 10 >/dev/null 2>&1 || true  # quiet default
+  iwconfig "$IFACE" txpower 10 >/dev/null 2>&1 || true  # low-power default
   add_iface_to_drop
   echo "[pylon] $IFACE => LISTEN: monitor mode, MAC randomized, txpower=10 dBm, outbound blocked."
 }
@@ -117,7 +116,7 @@ audit() {
     echo "Interface $IFACE not present. Replug device or check udev rule."
   fi
   echo "---- nftables ----"
-  nft list ruleset 2>/dev/null | sed -n '/table inet pylon/,$p' | sed 's/^/  /' || echo "  (no pylon table)"
+  nft list table inet pylon 2>/dev/null | sed 's/^/  /' || echo "  (no pylon table)"
   echo "-------------------"
 }
 
@@ -153,6 +152,7 @@ setup() {
   write_udev_rule "$vidpid"
   echo "[pylon] If the interface name isn't '$IFACE' yet, unplug/replug the Alfa and re-run 'pylon.sh audit'."
 }
+
 tx_toggle() {
   IFACE="PYLON"
   LOW_MBM=1000   # 10 dBm
@@ -165,10 +165,10 @@ tx_toggle() {
   # Choose target power (flip)
   if [[ -n "$CURR_PWR" && "$CURR_PWR" -ge 20 ]]; then
     TARGET="$LOW_MBM"
-    LABEL="10 dBm (stealth)"
+    LABEL="10 dBm (low power)"
   else
     TARGET="$HIGH_MBM"
-    LABEL="20 dBm (full)"
+    LABEL="20 dBm (full power)"
   fi
 
   echo "[pylon] Target txpower -> $LABEL"
@@ -202,16 +202,17 @@ Usage: sudo pylon.sh <command>
 
 Commands:
   setup           Install deps, detect Alfa (VID:PID), write udev rule -> $IFACE
-  listen          Stealth mode (monitor, rand MAC, txpower 10, outbound blocked)
+  listen          Listen-only profile (monitor, rand MAC, txpower 10, outbound blocked)
   loud            Active mode  (managed, rand MAC, outbound allowed)
   switch          Toggle between listen/loud based on current mode
-  audit           Print current $IFACE mode, MACs, driver, nftables state
+  toggle          Toggle configured transmit power between 10 and 20 dBm
+  audit           Print current $IFACE mode, MACs, driver, PYLON nftables state
   boot-listen on  Start in LISTEN mode each boot
   boot-listen off Disable auto LISTEN at boot
 
 Tips:
   - After 'setup', unplug/replug the Alfa so udev renames it to $IFACE.
-  - Use 'audit' to verify before running labs.
+  - Use 'audit' to verify before running authorized labs.
 EOF
 }
 
@@ -222,7 +223,7 @@ main() {
     listen)          listen_mode ;;
     loud)            loud_mode ;;
     switch)          switch_mode ;;
-    toggle)         tx_toggle ;; 
+    toggle)          tx_toggle ;;
     audit)           audit ;;
     boot-listen)
       case "${1:-}" in
@@ -236,19 +237,3 @@ main() {
 }
 
 main "$@"
-toggle)
-        IFACE="PYLON"
-        LOW=10
-        HIGH=20
-        current=$(iw dev $IFACE info | awk '/txpower/ {print int($2)}')
-
-        if [ "$current" -ge "$HIGH" ]; then
-            echo "[*] Switching $IFACE Tx power -> $LOW dBm (stealth mode)"
-            sudo iw dev $IFACE set txpower fixed ${LOW}00
-        else
-            echo "[*] Switching $IFACE Tx power -> $HIGH dBm (full power)"
-            sudo iw dev $IFACE set txpower fixed ${HIGH}00
-        fi
-
-        iw dev $IFACE info | grep txpower
-        ;;
